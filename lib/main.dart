@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter/services.dart';
+import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
@@ -27,21 +28,22 @@ class HostInfo {
   static Future<String?> getHostName() async {
     if (kIsWeb) {
       return "Not supported on web";
-    } else if (Platform.isAndroid || Platform.isIOS) {
+    } else if (Platform.isIOS) {
       try {
         final String? hostName = await platform.invokeMethod('getHostName');
         return hostName;
       } on PlatformException catch (e) {
         print("Failed to get host name: '${e.message}'.");
-        return null;
+        // android
+        return "none";
       }
-    } else if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
+    } else if (Platform.isLinux || Platform.isWindows || Platform.isMacOS || Platform.isAndroid) {
       try {
         // 使用dart:io的功能在桌面系统上获取主机名
         return Platform.localHostname;
       } catch (e) {
         print("Failed to get host name: $e");
-        return null;
+        return "none";
       }
     } else {
       return "Unsupported platform";
@@ -307,6 +309,7 @@ class _MDnsPageState extends State<MDnsPage> {
           print('Client $clientId disconnected.');
           await fileSink?.flush();
           await fileSink?.close();
+          await OpenFile.open(fullPath);
           client.destroy();
         },
         onError: (error) async {
