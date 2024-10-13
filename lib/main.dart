@@ -10,8 +10,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
 import 'dart:async';
 
+import 'package:permission_handler/permission_handler.dart';
+
 const FileShareService = "_fileshare._tcp";
 const FileShareServiceName = "本地文件传输";
+
 
 void main() {
   runApp(MyApp());
@@ -87,6 +90,17 @@ class _MDnsPageState extends State<MDnsPage> {
     _getIpAddress();
   }
 
+  Future<void> requestLocationPermission() async {
+    var status = await Permission.location.request();
+    status = await Permission.nearbyWifiDevices.request();
+    if (status.isGranted) {
+      // 权限被授予，可以进行相关操作
+    } else {
+      // 权限被拒绝，显示警告
+      showPermissionDeniedDialog();
+    }
+  }
+
   @override
   void dispose() {
     broadcast?.stop();
@@ -129,7 +143,55 @@ class _MDnsPageState extends State<MDnsPage> {
     }
   }
 
+  void showPermissionDeniedDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Permission Denied'),
+          content: Text('Location permission is required to use this feature.'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // 关闭对话框
+              },
+              child: Text('OK'),
+            ),
+            TextButton(
+              onPressed: () {
+                openAppSettings(); // 跳转到应用设置
+              },
+              child: Text('Settings'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void showTemporaryDialog(BuildContext context, String content) {
+    // 显示对话框
+    showDialog(
+      context: context,
+      barrierDismissible: false, // 不允许通过点击外部区域关闭
+      builder: (BuildContext context) {
+        // 返回对话框的内容
+        return AlertDialog(
+          title: Text('Temporary Dialog'),
+          content: Text(content),
+        );
+      },
+    );
+
+    // 设置 1 秒后关闭对话框
+    Future.delayed(Duration(seconds: 1), () {
+      Navigator.of(context).pop(); // 关闭对话框
+    });
+  }
+
   Future<void> _registerService() async {
+    requestLocationPermission();
+
     // 服务注册需要启动并注册到mDNS中
     if (isRegistering) return;
 
@@ -137,8 +199,11 @@ class _MDnsPageState extends State<MDnsPage> {
       isRegistering = true;
     });
 
+    showTemporaryDialog(context, "创建服务器");
+
     // 1. 启动服务, 设置为随机端口
     final serverSocket = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
+    showTemporaryDialog(context, "完成创建");
     // todo 未来可能需要, 存储复杂的每个连接节点的状态
     // final fileServer = FileServer();
 
