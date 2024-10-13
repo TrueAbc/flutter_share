@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
+import 'dart:async';
 
 const FileShareService = "_fileshare._tcp";
 const FileShareServiceName = "本地文件传输";
@@ -86,7 +87,6 @@ class _MDnsPageState extends State<MDnsPage> {
     _getIpAddress();
   }
 
-
   @override
   void dispose() {
     broadcast?.stop();
@@ -147,8 +147,7 @@ class _MDnsPageState extends State<MDnsPage> {
       name: FileShareServiceName,
       type: FileShareService,
       port: serverSocket.port,
-      attributes: {'ip': ipAddress!,
-        'host': hostname!},
+      attributes: {'ip': ipAddress!, 'host': hostname!},
     );
 
     // 3. 服务开始启动并设置监听回调
@@ -161,9 +160,10 @@ class _MDnsPageState extends State<MDnsPage> {
       int? fileSize;
       String? fileName;
       IOSink? fileSink;
+      String? fullPath;
 
       client.listen(
-            (Uint8List data) async {
+        (Uint8List data)  {
           buffer.add(data);
 
           try {
@@ -178,10 +178,13 @@ class _MDnsPageState extends State<MDnsPage> {
             }
 
             // 读取文件大小（int32）
-            if (fileNameLength != null && fileSize == null && bytes.length >= offset + 4) {
+            if (fileNameLength != null &&
+                fileSize == null &&
+                bytes.length >= offset + 4) {
               fileSize = _bytesToInt32(bytes.sublist(offset, offset + 4));
               offset += 4;
-              print('File size: $fileSize');
+              print(
+                  'File size: $fileSize, ${fileSize! ~/ 1024}KB, ${fileSize! ~/ 1024 / 1024}MB');
             }
 
             // 读取文件名称
@@ -195,44 +198,56 @@ class _MDnsPageState extends State<MDnsPage> {
               print('File name: $fileName');
 
               // 创建文件路径并确保文件内容被清空
-              final fullPath = path.join(savePath!, fileName);
-              File file = File(fullPath);
+              fullPath = path.join(savePath!, fileName);
+              File file = File(fullPath!);
               print("Full Path: $fullPath");
               file.writeAsBytesSync([]); // 清空文件内容, 也会关闭文件
-
-              fileSink = File(fullPath).openWrite(mode: FileMode.append); // 以追加模式写入
+              fileSink = File(fullPath!).openWrite(mode: FileMode.append); // 以追加模式写入
             }
 
             // 读取文件内容并追加写入文件
-            if (fileSink != null && bytes.length > offset) {
+            if (fullPath != null && bytes.length > offset) {
+              // 后续的操作都在这里了
               final content = bytes.sublist(offset);
+              offset += content.length;
+              buffer.clear();
+
               fileSink?.add(content);
 
+              print("content:${content.length}");
               // 更新接收到的文件内容大小
               if (fileSize != null && content.isNotEmpty) {
                 int receivedSize = content.length;
-                // await fileSink?.flush();
                 print('Received ${receivedSize} bytes of $fileSize bytes.');
+                // 这里调用的话需要保证flush的顺序调用
+                // fileSink?.flush();
+                // await fileSink?.close();
               }
-            }
 
-            // 移除已经处理过的字节
-            buffer.clear();
-            buffer.add(bytes.sublist(offset)); // 只保留未处理的部分
+            }else {
+              // 移除已经处理过的字节
+              buffer.clear();
+              buffer.add(bytes.sublist(offset)); // 只保留未处理的部分  
+            }
+            
+            print("buffer size: ${buffer.length}");
           } catch (e) {
             print('Error processing data from client $clientId: $e');
+            fileSink?.flush();
+            fileSink?.close();
             client.destroy();
           }
         },
         onDone: () async {
           print('Client $clientId disconnected.');
           await fileSink?.flush();
-          fileSink?.close();
-          client.close();
+          await fileSink?.close();
+          client.destroy();
         },
-        onError: (error) {
+        onError: (error) async {
           print('Error with client $clientId: $error');
-          fileSink?.close();
+          await fileSink?.flush();
+          await fileSink?.close();
           client.close();
         },
       );
@@ -249,7 +264,6 @@ class _MDnsPageState extends State<MDnsPage> {
 
     print('Service registered: ${service.name}');
   }
-
 
   Future<void> _unregisterService() async {
     if (!isRegistered) return;
@@ -277,10 +291,13 @@ class _MDnsPageState extends State<MDnsPage> {
     await discovery.ready;
 
 // If you want to listen to the discovery :
-    discovery.eventStream!.listen((event) { // `eventStream` is not null as the discovery instance is "ready" !
+    discovery.eventStream!.listen((event) {
+      // `eventStream` is not null as the discovery instance is "ready" !
       if (event.type == BonsoirDiscoveryEventType.discoveryServiceFound) {
-        event.service!.resolve(discovery.serviceResolver); // Should be called when the user wants to connect to this service.
-      } else if (event.type == BonsoirDiscoveryEventType.discoveryServiceResolved) {
+        event.service!.resolve(discovery
+            .serviceResolver); // Should be called when the user wants to connect to this service.
+      } else if (event.type ==
+          BonsoirDiscoveryEventType.discoveryServiceResolved) {
         setState(() {
           services.removeWhere((s) => s.name == event.service!.name);
           services.add(event.service!);
@@ -308,7 +325,8 @@ class _MDnsPageState extends State<MDnsPage> {
     if (selectedFile == null) return;
 
     // 这里的host需要重新配置
-    Socket socket = await Socket.connect(service.attributes["ip"], service.port);
+    Socket socket =
+        await Socket.connect(service.attributes["ip"], service.port);
     final fileNameBytes = utf8.encode(selectedFileName!);
     final fileNameLength = fileNameBytes.length;
     final fileLength = await selectedFile!.length();
@@ -351,7 +369,8 @@ class _MDnsPageState extends State<MDnsPage> {
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
-    final fileName = path.basename(file.path!); // Extract the file name without directory information
+    final fileName = path.basename(
+        file.path!); // Extract the file name without directory information
 
     setState(() {
       selectedFile = File(file.path!);
@@ -372,18 +391,25 @@ class _MDnsPageState extends State<MDnsPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             ElevatedButton(
-              onPressed: isRegistered ? _unregisterService : (isRegistering ? null : _registerService),
-              child: Text(isRegistered ? 'Stop Service' : (isRegistering ? 'Registering...' : 'Register Service')),
+              onPressed: isRegistered
+                  ? _unregisterService
+                  : (isRegistering ? null : _registerService),
+              child: Text(isRegistered
+                  ? 'Stop Service'
+                  : (isRegistering ? 'Registering...' : 'Register Service')),
             ),
             const SizedBox(height: 16.0),
             ElevatedButton(
               onPressed: isDiscovering ? null : _discoverServices,
-              child: Text(isDiscovering ? 'Discovering...' : 'Discover Services'),
+              child:
+                  Text(isDiscovering ? 'Discovering...' : 'Discover Services'),
             ),
             const SizedBox(height: 16.0),
             ElevatedButton(
               onPressed: _selectFile,
-              child: Text(selectedFile != null ? 'File Selected: ${selectedFile!.path}' : 'Select File'),
+              child: Text(selectedFile != null
+                  ? 'File Selected: ${selectedFile!.path}'
+                  : 'Select File'),
             ),
             if (selectedFile != null) ...[
               const Divider(), // 添加分割线
@@ -397,7 +423,9 @@ class _MDnsPageState extends State<MDnsPage> {
             const SizedBox(height: 16.0),
             Divider(),
             Text(savePath != null ? 'Base Directory: $savePath' : 'Loading...'),
-            Text(hostname != null && ipAddress != null ? 'Hostname: $hostname, IP Address: $ipAddress' : 'Loading...'),
+            Text(hostname != null && ipAddress != null
+                ? 'Hostname: $hostname, IP Address: $ipAddress'
+                : 'Loading...'),
             const SizedBox(height: 16.0),
             const Divider(),
             Expanded(
@@ -406,7 +434,8 @@ class _MDnsPageState extends State<MDnsPage> {
                 itemBuilder: (context, index) {
                   final service = services[index];
                   return ListTile(
-                    title: Text('${service.attributes["host"]},${service.attributes["ip"]}:${service.port}'),
+                    title: Text(
+                        '${service.attributes["host"]},${service.attributes["ip"]}:${service.port}'),
                     subtitle: Text(service.name),
                     trailing: const Icon(Icons.send),
                     onTap: () => _sendFile(service),
@@ -473,8 +502,10 @@ class FileServer {
 
 // 将 int32 字节数组转换为整数
 int _bytesToInt32(List<int> bytes) {
-  return ByteData.sublistView(Uint8List.fromList(bytes)).getInt32(0, Endian.big);
+  return ByteData.sublistView(Uint8List.fromList(bytes))
+      .getInt32(0, Endian.big);
 }
+
 // 将 int32 转换为字节数组
 List<int> _int32ToBytes(int value) {
   var bytes = ByteData(4);
